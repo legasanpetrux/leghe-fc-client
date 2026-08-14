@@ -1,0 +1,56 @@
+{
+  "name": "@legasanpetrux/leghe-fc-client",
+  "version": "0.1.0",
+  "description": "Unofficial, read-only TypeScript client for Leghe FC league data.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Lega San Petrux",
+  "homepage": "https://github.com/legasanpetrux/leghe-fc-client#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/legasanpetrux/leghe-fc-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/legasanpetrux/leghe-fc-client/issues"
+  },
+  "keywords": [
+    "fantasy-football",
+    "leghe-fc",
+    "typescript",
+    "api-client"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "smoke:live": "npm run build && node --env-file-if-exists=.env.local scripts/smoke-live.mjs",
+    "prepack": "npm run check && npm test && npm run build"
+  },
+  "dependencies": {
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "25.6.0",
+    "tsx": "4.19.4",
+    "typescript": "6.0.3"
+  }
+}
