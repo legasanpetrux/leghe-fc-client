@@ -1,5 +1,7 @@
 # `@legasanpetrux/leghe-fc-client`
 
+English | [Italiano](README.it.md)
+
 Unofficial, server-only TypeScript client for reading league, team, roster, player, competition,
 fixture, result, and fantasy-point data from Leghe FC.
 
