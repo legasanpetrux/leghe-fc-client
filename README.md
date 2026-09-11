@@ -19,6 +19,12 @@ mutation operations.
 - An ESM application; the package does not provide a CommonJS build
 - A Leghe FC account permitted to access the league being read
 
+## Installation
+
+```bash
+npm install @legasanpetrux/leghe-fc-client
+```
+
 ## Usage
 
 ```ts
