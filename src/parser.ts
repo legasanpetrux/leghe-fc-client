@@ -40,8 +40,14 @@ function parseScore(value: unknown): { home: number; away: number } | null {
 
 function parsePoints(value: unknown): string | null {
 	if (value === null || value === undefined || value === '') return null;
-	const parsed = Number(String(value).replace(',', '.'));
-	if (!Number.isFinite(parsed) || parsed < 0 || parsed > 99_999.99) return null;
+	const normalized = String(value).trim().replace(',', '.');
+	const parsed = Number(normalized);
+	if (!/^\d+(?:\.\d+)?$/.test(normalized) || !Number.isFinite(parsed) || parsed > 99_999.99) {
+		throw new LegheFcError(
+			'CALENDAR_CONTRACT_CHANGED',
+			'A fixture contained invalid fantasy points.'
+		);
+	}
 	return parsed.toFixed(2);
 }
 
@@ -76,7 +82,10 @@ export function parseLegheFcCalendar(payload: unknown, competitionId: string): L
 				: [];
 
 		for (const match of matches) {
-			if (match.tIdH <= 0 || match.tIdA <= 0) continue;
+			if (match.tIdH < 0 || match.tIdA < 0) {
+				throw new LegheFcError('INVALID_FIXTURE', 'A fixture contained a negative team ID.');
+			}
+			if (match.tIdH === 0 || match.tIdA === 0) continue;
 			if (match.tIdH === match.tIdA) {
 				throw new LegheFcError('INVALID_FIXTURE', 'A fixture has the same home and away team.');
 			}
@@ -87,7 +96,7 @@ export function parseLegheFcCalendar(payload: unknown, competitionId: string): L
 			}
 			seen.add(externalFixtureKey);
 
-			const score = parseScore(match.result);
+			const score = day.calculated ? parseScore(match.result) : null;
 			if (day.calculated && !score) {
 				throw new LegheFcError('CALCULATED_RESULT_INVALID', 'A calculated fixture did not contain a valid result.');
 			}

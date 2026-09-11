@@ -1,7 +1,13 @@
 import { z } from 'zod';
-import { clearPublicAppKeyCache, createPublicAppKeyProvider } from './app-key.js';
+import { createPublicAppKeyProvider } from './app-key.js';
 import { LegheFcError } from './errors.js';
+import { DEFAULT_TIMEOUT_MS, validateTransportOptions } from './options.js';
 import { parseLegheFcCalendar } from './parser.js';
+import {
+	parseLegheFcPlayerCatalog,
+	parseLegheFcRosters,
+	parseLegheFcRosterTeams
+} from './roster.js';
 import {
 	competitionSchema,
 	loginSchema,
@@ -16,11 +22,37 @@ import type {
 	LegheFcDiscovery,
 	LegheFcFixture,
 	LegheFcLeague,
-	LegheFcRequestOptions
+	LegheFcInvalidatableAppKeyProvider,
+	LegheFcPlayer,
+	LegheFcRequestOptions,
+	LegheFcRosterPlayer,
+	LegheFcRosterTeam
 } from './types.js';
 
 const APP_KEY_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 const ID_PATTERN = /^\d+$/;
+const sharedPublicAppKeyProviders = new WeakMap<
+	typeof globalThis.fetch,
+	Map<number, LegheFcInvalidatableAppKeyProvider>
+>();
+
+function getSharedPublicAppKeyProvider(
+	fetchImplementation: typeof globalThis.fetch,
+	timeoutMs: number
+): LegheFcInvalidatableAppKeyProvider {
+	let providersByTimeout = sharedPublicAppKeyProviders.get(fetchImplementation);
+	if (!providersByTimeout) {
+		providersByTimeout = new Map();
+		sharedPublicAppKeyProviders.set(fetchImplementation, providersByTimeout);
+	}
+
+	let provider = providersByTimeout.get(timeoutMs);
+	if (!provider) {
+		provider = createPublicAppKeyProvider({ fetch: fetchImplementation, timeoutMs });
+		providersByTimeout.set(timeoutMs, provider);
+	}
+	return provider;
+}
 
 function publicLeague(remote: RemoteLeague): LegheFcLeague {
 	return {
@@ -55,6 +87,7 @@ function validateOptions(options: LegheFcClientOptions): void {
 	if (options.appKey !== undefined && options.appKeyProvider !== undefined) {
 		throw new LegheFcError('CLIENT_CONFIG_INVALID', 'Configure appKey or appKeyProvider, not both.');
 	}
+	validateTransportOptions(options);
 }
 
 export interface LegheFcAccount {
@@ -65,6 +98,9 @@ export interface LegheFcAccount {
 export interface LegheFcLeagueClient {
 	readonly league: LegheFcLeague;
 	discover(options?: LegheFcRequestOptions): Promise<LegheFcDiscovery>;
+	getTeams(options?: LegheFcRequestOptions): Promise<LegheFcRosterTeam[]>;
+	getPlayerCatalog(options?: LegheFcRequestOptions): Promise<LegheFcPlayer[]>;
+	getRosters(options?: LegheFcRequestOptions): Promise<LegheFcRosterPlayer[]>;
 	getCalendar(competitionId: string, options?: LegheFcRequestOptions): Promise<LegheFcFixture[]>;
 }
 
@@ -134,6 +170,33 @@ class AuthenticatedLeagueClient implements LegheFcLeagueClient {
 		};
 	}
 
+	async getTeams({ signal }: LegheFcRequestOptions = {}): Promise<LegheFcRosterTeam[]> {
+		const payload = await this.#transport.request(
+			'/onboarding/v1/league/teams/all',
+			{ method: 'GET', authorization: this.#jwt },
+			signal
+		);
+		return parseLegheFcRosterTeams(payload);
+	}
+
+	async getPlayerCatalog({ signal }: LegheFcRequestOptions = {}): Promise<LegheFcPlayer[]> {
+		const payload = await this.#transport.request(
+			'/onboarding/v1/league/players',
+			{ method: 'GET', authorization: this.#jwt },
+			signal
+		);
+		return parseLegheFcPlayerCatalog(payload);
+	}
+
+	async getRosters({ signal }: LegheFcRequestOptions = {}): Promise<LegheFcRosterPlayer[]> {
+		const requestOptions = signal === undefined ? {} : { signal };
+		const [teams, catalog] = await Promise.all([
+			this.getTeams(requestOptions),
+			this.getPlayerCatalog(requestOptions)
+		]);
+		return parseLegheFcRosters(teams, catalog);
+	}
+
 	async getCalendar(
 		competitionId: string,
 		{ signal }: LegheFcRequestOptions = {}
@@ -156,11 +219,9 @@ export async function authenticateLegheFc(
 ): Promise<LegheFcAccount> {
 	validateOptions(options);
 	const fetchImplementation = options.fetch ?? globalThis.fetch;
-	const usesPublicProvider = options.appKey === undefined && options.appKeyProvider === undefined;
-	const appKeyProvider = options.appKeyProvider ?? createPublicAppKeyProvider({
-		fetch: fetchImplementation,
-		...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })
-	});
+	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const appKeyProvider =
+		options.appKeyProvider ?? getSharedPublicAppKeyProvider(fetchImplementation, timeoutMs);
 	const requestOptions = { ...(signal === undefined ? {} : { signal }) };
 	const resolveAppKey = async () => options.appKey ?? appKeyProvider(requestOptions);
 	const login = async (appKey: string) => {
@@ -198,7 +259,7 @@ export async function authenticateLegheFc(
 			error instanceof LegheFcError &&
 			(error.code === 'HTTP_ERROR' || error.code === 'LOGIN_CONTRACT_CHANGED');
 		if (!canRefresh) throw error;
-		if (usesPublicProvider) clearPublicAppKeyCache();
+		appKeyProvider.invalidate?.();
 		const refreshedAppKey = await resolveAppKey();
 		if (refreshedAppKey === firstAppKey) throw error;
 		return login(refreshedAppKey);

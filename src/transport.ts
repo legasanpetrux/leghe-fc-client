@@ -1,11 +1,14 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { LegheFcError } from './errors.js';
+import {
+	DEFAULT_MAX_ATTEMPTS,
+	DEFAULT_MAX_RESPONSE_BYTES,
+	DEFAULT_TIMEOUT_MS,
+	validateTransportOptions
+} from './options.js';
 
 const API_BASE_URL = 'https://apileague.fantacalcio.it';
 const WEB_ORIGIN = 'https://leghe.fantacalcio.it';
-const DEFAULT_TIMEOUT_MS = 12_000;
-const DEFAULT_MAX_ATTEMPTS = 3;
-const DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 
 const BROWSER_API_HEADERS = {
 	'user-agent':
@@ -23,6 +26,7 @@ const BROWSER_API_HEADERS = {
 
 const FIXED_GET_PATHS = new Set([
 	'/onboarding/v1/league/teams/all',
+	'/onboarding/v1/league/players',
 	'/onboarding/v1/league/competitions',
 	'/onboarding/v1/league/update'
 ]);
@@ -33,12 +37,6 @@ function isAllowedRequest(method: string, path: string): boolean {
 	return FIXED_GET_PATHS.has(path) || /^\/onboarding\/v1\/league\/competition\/calendar\/\d+$/.test(path);
 }
 
-function validateIntegerOption(name: string, value: number, minimum: number, maximum: number): void {
-	if (!Number.isInteger(value) || value < minimum || value > maximum) {
-		throw new LegheFcError('CLIENT_CONFIG_INVALID', `${name} must be an integer between ${minimum} and ${maximum}.`);
-	}
-}
-
 function retryDelay(attempt: number, retryAfter: string | null): number {
 	if (retryAfter) {
 		const seconds = Number(retryAfter);
@@ -47,6 +45,18 @@ function retryDelay(attempt: number, retryAfter: string | null): number {
 		if (Number.isFinite(retryDate)) return Math.max(0, Math.min(retryDate - Date.now(), 30_000));
 	}
 	return 300 * 2 ** (attempt - 1) + Math.floor(Math.random() * 200);
+}
+
+async function waitBeforeRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+	try {
+		await sleep(delayMs, undefined, signal === undefined ? undefined : { signal });
+	} catch (error) {
+		throw new LegheFcError(
+			'NETWORK_ERROR',
+			signal?.aborted ? 'The request was cancelled.' : 'The API request could not be retried.',
+			{ cause: error }
+		);
+	}
 }
 
 async function readJson(response: Response, maxResponseBytes: number): Promise<unknown> {
@@ -108,9 +118,11 @@ export class ReadOnlyTransport {
 		this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 		this.#maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
 		this.#maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
-		validateIntegerOption('timeoutMs', this.#timeoutMs, 1, 120_000);
-		validateIntegerOption('maxAttempts', this.#maxAttempts, 1, 5);
-		validateIntegerOption('maxResponseBytes', this.#maxResponseBytes, 1_024, 50 * 1024 * 1024);
+		validateTransportOptions({
+			timeoutMs: this.#timeoutMs,
+			maxAttempts: this.#maxAttempts,
+			maxResponseBytes: this.#maxResponseBytes
+		});
 	}
 
 	async request(
@@ -141,13 +153,14 @@ export class ReadOnlyTransport {
 				const response = await this.#fetch(`${API_BASE_URL}${path}`, {
 					method: init.method,
 					headers,
+					redirect: 'error',
 					...(init.body === undefined ? {} : { body: init.body }),
 					signal: requestSignal
 				});
 
 				if ((response.status === 429 || response.status >= 500) && attempt < this.#maxAttempts) {
 					await response.body?.cancel();
-					await sleep(retryDelay(attempt, response.headers.get('retry-after')), undefined, { signal });
+					await waitBeforeRetry(retryDelay(attempt, response.headers.get('retry-after')), signal);
 					continue;
 				}
 				if (!response.ok) {
@@ -170,7 +183,7 @@ export class ReadOnlyTransport {
 						{ cause: error }
 					);
 				}
-				await sleep(retryDelay(attempt, null), undefined, { signal });
+				await waitBeforeRetry(retryDelay(attempt, null), signal);
 			}
 		}
 

@@ -11,6 +11,6 @@ You can report security issues through:
 * **GitHub Private Vulnerability Reporting**, available through the repository's **Security** tab.
 * **Email:** `info@legasanpetrux.org`
 
-Please include a short description of the issue and, steps to reproduce it.
+Please include a short description of the issue and steps to reproduce it.
 
 Thanks!

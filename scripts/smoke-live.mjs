@@ -33,6 +33,8 @@ async function main() {
 	console.log(
 		`Discovery succeeded for ${league.league.name}: ${discovery.teams.length} teams, ${discovery.competitions.length} competitions.`
 	);
+	const roster = await league.getRosters();
+	console.log(`Roster succeeded: ${roster.length} assigned players.`);
 
 	const activeCompetitions = discovery.competitions.filter((competition) => !competition.deleted);
 	const configuredCompetitionId = optionalEnvironment('LEGHE_FC_COMPETITION_ID');

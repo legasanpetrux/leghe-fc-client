@@ -16,7 +16,8 @@ export type LegheFcErrorCode =
 	| 'LEAGUE_NOT_SELECTED'
 	| 'LOGIN_CONTRACT_CHANGED'
 	| 'NETWORK_ERROR'
-	| 'RESPONSE_TOO_LARGE';
+	| 'RESPONSE_TOO_LARGE'
+	| 'ROSTER_CONTRACT_CHANGED';
 
 export class LegheFcError extends Error {
 	readonly code: LegheFcErrorCode;

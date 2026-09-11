@@ -24,9 +24,25 @@ export const remoteTeamSchema = z.object({
 	nu: z.string().optional().default('')
 });
 
+export const remoteRosterTeamSchema = remoteTeamSchema.extend({
+	cal: z.string().max(20_000),
+	cs: z.string().max(20_000),
+	r: z.object({
+		p: z.number().int().nonnegative(),
+		d: z.number().int().nonnegative(),
+		c: z.number().int().nonnegative(),
+		a: z.number().int().nonnegative()
+	})
+});
+
 export const teamsSchema = z.object({
 	timestamp: z.number(),
 	data: z.array(remoteTeamSchema)
+});
+
+export const rosterTeamsSchema = z.object({
+	timestamp: z.number(),
+	data: z.array(remoteRosterTeamSchema)
 });
 
 const booleanishSchema = z.preprocess((value) => {
@@ -54,6 +70,17 @@ export const updateSchema = z.object({
 	roster: z.number(),
 	options: z.number(),
 	playersOptions: z.number()
+});
+
+export const remotePlayerSchema = z.object({
+	id: z.number().int().positive(),
+	name: z.string().min(1).max(160),
+	fcrle: z.number().int()
+});
+
+export const playersSchema = z.object({
+	timestamp: z.number(),
+	players: z.array(remotePlayerSchema).max(5_000)
 });
 
 export type RemoteLeague = z.infer<typeof remoteLeagueSchema>;

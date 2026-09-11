@@ -38,7 +38,7 @@ describe('parseLegheFcCalendar', () => {
 		assert.match(fixtures[0]?.payloadHash ?? '', /^[a-f0-9]{64}$/);
 	});
 
-	it('keeps uncalculated fixtures scoreless', () => {
+	it('keeps uncalculated fixtures scoreless even when the payload contains a stale result', () => {
 		const [fixture] = parseLegheFcCalendar(
 			[
 				{
@@ -47,13 +47,31 @@ describe('parseLegheFcCalendar', () => {
 					calculated: false,
 					teamIdHome: 10,
 					teamIdAway: 20,
-					result: null
+					result: '5-4'
 				}
 			],
 			'99'
 		);
 		assert.equal(fixture?.homeScore, null);
 		assert.equal(fixture?.awayScore, null);
+	});
+
+	it('rejects negative team IDs instead of treating them as bye entries', () => {
+		assert.throws(
+			() =>
+				parseLegheFcCalendar(
+					[
+						{
+							matchDay: 1,
+							championshipMatchDay: 1,
+							calculated: false,
+							matches: [{ tIdH: -10, tIdA: 20 }]
+						}
+					],
+					'99'
+				),
+			(error: unknown) => error instanceof LegheFcError && error.code === 'INVALID_FIXTURE'
+		);
 	});
 
 	it('skips bye entries', () => {
@@ -89,6 +107,25 @@ describe('parseLegheFcCalendar', () => {
 				),
 			(error: unknown) =>
 				error instanceof LegheFcError && error.code === 'CALCULATED_RESULT_INVALID'
+		);
+	});
+
+	it('rejects malformed nonempty fantasy points', () => {
+		assert.throws(
+			() =>
+				parseLegheFcCalendar(
+					[
+						{
+							matchDay: 1,
+							championshipMatchDay: 1,
+							calculated: true,
+							matches: [{ tIdH: 10, tIdA: 20, result: '2-1', ptH: 'invalid' }]
+						}
+					],
+					'99'
+				),
+			(error: unknown) =>
+				error instanceof LegheFcError && error.code === 'CALENDAR_CONTRACT_CHANGED'
 		);
 	});
 

@@ -1,7 +1,7 @@
 # `@legasanpetrux/leghe-fc-client`
 
-Unofficial, server-only TypeScript client for reading league, team, competition, fixture, result,
-and fantasy-point data from Leghe FC.
+Unofficial, server-only TypeScript client for reading league, team, roster, player, competition,
+fixture, result, and fantasy-point data from Leghe FC.
 
 > [!WARNING]
 > This package is not affiliated with, endorsed by, or supported by Fantacalcio. It uses an
@@ -16,6 +16,7 @@ mutation operations.
 ## Requirements
 
 - Node.js 22 or newer
+- An ESM application; the package does not provide a CommonJS build
 - A Leghe FC account permitted to access the league being read
 
 ## Usage
@@ -32,8 +33,22 @@ console.log(account.leagues); // IDs and non-secret display metadata only
 
 const league = account.league(process.env.LEGHE_FC_LEAGUE_ID);
 const discovery = await league.discover();
-const fixtures = await league.getCalendar(discovery.competitions[0]!.id);
+const activeCompetitions = discovery.competitions.filter((item) => !item.deleted);
+const configuredCompetitionId = process.env.LEGHE_FC_COMPETITION_ID;
+const competition = configuredCompetitionId
+  ? activeCompetitions.find((item) => item.id === configuredCompetitionId)
+  : activeCompetitions.length === 1
+    ? activeCompetitions[0]
+    : undefined;
+if (!competition) throw new Error('Select one active Leghe FC competition.');
+
+const fixtures = await league.getCalendar(competition.id);
+const roster = await league.getRosters();
 ```
+
+`getTeams()` returns normalized teams with player IDs, acquisition costs, and position totals.
+`getPlayerCatalog()` returns the normalized league player catalog. `getRosters()` joins both reads
+and rejects missing players, duplicate assignments, invalid roles, and inconsistent position totals.
 
 If the account belongs to exactly one league, `account.league()` selects it automatically.
 Accounts with multiple leagues must pass a league ID.
@@ -48,6 +63,10 @@ const account = await authenticateLegheFc({
   appKey: process.env.LEGHE_FC_APP_KEY
 });
 ```
+
+Providers returned by `createPublicAppKeyProvider()` keep an isolated cache and expose
+`invalidate()`. Authentication uses that method automatically before retrying a rejected key.
+Plain custom provider functions remain supported and are called again when a key may have rotated.
 
 ## Errors
 
@@ -77,7 +96,7 @@ const fixtures = await league.getCalendar('99', { signal: controller.signal });
 ## Compatibility
 
 Contract changes are reported with errors such as `LOGIN_CONTRACT_CHANGED`,
-`DISCOVERY_CONTRACT_CHANGED`, and `CALENDAR_CONTRACT_CHANGED`.
+`DISCOVERY_CONTRACT_CHANGED`, `CALENDAR_CONTRACT_CHANGED`, and `ROSTER_CONTRACT_CHANGED`.
 
 ## Development
 
@@ -93,8 +112,9 @@ Tests use only synthetic payloads and do not require real credentials or network
 
 ### Manual live smoke test
 
-The opt-in smoke test authenticates, discovers league metadata, and reads one competition
-calendar. It prints only sanitized names and counts, never credentials or JWTs, and contains no
+The opt-in smoke test authenticates, discovers league metadata, and reads rosters plus one
+competition calendar. It prints only league or competition display names and IDs needed for
+selection plus aggregate counts; it never prints credentials, JWTs, or player data and contains no
 remote mutation calls.
 
 ```bash

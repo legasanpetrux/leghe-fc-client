@@ -11,6 +11,31 @@ export type LegheFcTeam = {
 	username: string | null;
 };
 
+export type LegheFcPlayerPosition = 'P' | 'D' | 'C' | 'A';
+
+export type LegheFcRosterEntry = {
+	playerId: string;
+	acquisitionCost: number;
+};
+
+export type LegheFcPositionCounts = Record<LegheFcPlayerPosition, number>;
+
+export type LegheFcRosterTeam = LegheFcTeam & {
+	roster: LegheFcRosterEntry[];
+	positionCounts: LegheFcPositionCounts;
+};
+
+export type LegheFcPlayer = {
+	id: string;
+	name: string;
+	position: LegheFcPlayerPosition;
+};
+
+export type LegheFcRosterPlayer = LegheFcPlayer & {
+	teamId: string;
+	acquisitionCost: number;
+};
+
 export type LegheFcCompetition = {
 	id: string;
 	leagueId: string;
@@ -48,11 +73,20 @@ export type LegheFcRequestOptions = {
 	signal?: AbortSignal;
 };
 
+export type LegheFcAppKeyProvider = {
+	(options: LegheFcRequestOptions): Promise<string>;
+	invalidate?(): void;
+};
+
+export type LegheFcInvalidatableAppKeyProvider = LegheFcAppKeyProvider & {
+	invalidate(): void;
+};
+
 export type LegheFcClientOptions = {
 	username: string;
 	password: string;
 	appKey?: string;
-	appKeyProvider?: (options: LegheFcRequestOptions) => Promise<string>;
+	appKeyProvider?: LegheFcAppKeyProvider;
 	fetch?: typeof globalThis.fetch;
 	timeoutMs?: number;
 	maxAttempts?: number;

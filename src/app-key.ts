@@ -1,16 +1,14 @@
 import { LegheFcError } from './errors.js';
-import type { LegheFcRequestOptions } from './types.js';
+import { DEFAULT_TIMEOUT_MS, validateTimeoutMs } from './options.js';
+import type {
+	LegheFcAppKeyProvider,
+	LegheFcInvalidatableAppKeyProvider
+} from './types.js';
 
 const APP_KEY_PATTERN = /\b["']?authAppKey["']?\s*:\s*(["'])([A-Za-z0-9_-]{16,128})\1/;
 const APP_KEY_SOURCE_URL = 'https://leghe.fantacalcio.it/';
 const APP_KEY_CACHE_MS = 6 * 60 * 60 * 1000;
 const MAX_APP_KEY_PAGE_BYTES = 512 * 1024;
-
-let appKeyCache: { value: string; expiresAt: number } | undefined;
-
-export function clearPublicAppKeyCache(): void {
-	appKeyCache = undefined;
-}
 
 export function extractLegheFcAppKey(html: string): string | null {
 	return APP_KEY_PATTERN.exec(html)?.[2] ?? null;
@@ -54,11 +52,13 @@ async function readBoundedText(response: Response): Promise<string> {
 export function createPublicAppKeyProvider(options: {
 	fetch?: typeof globalThis.fetch;
 	timeoutMs?: number;
-} = {}): (requestOptions: LegheFcRequestOptions) => Promise<string> {
+} = {}): LegheFcInvalidatableAppKeyProvider {
 	const fetchImplementation = options.fetch ?? globalThis.fetch;
-	const timeoutMs = options.timeoutMs ?? 12_000;
+	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	validateTimeoutMs(timeoutMs);
+	let appKeyCache: { value: string; expiresAt: number } | undefined;
 
-	return async ({ signal } = {}) => {
+	const provider: LegheFcAppKeyProvider = async ({ signal } = {}) => {
 		if (appKeyCache && appKeyCache.expiresAt > Date.now()) return appKeyCache.value;
 
 		const timeoutSignal = AbortSignal.timeout(timeoutMs);
@@ -88,4 +88,10 @@ export function createPublicAppKeyProvider(options: {
 			);
 		}
 	};
+
+	return Object.assign(provider, {
+		invalidate(): void {
+			appKeyCache = undefined;
+		}
+	});
 }
