@@ -3,7 +3,7 @@
 [English](README.md) | Italiano
 
 Client TypeScript non ufficiale, esclusivamente server-side, per leggere da Leghe FC i dati relativi
-a leghe, squadre, rose, calciatori, competizioni, calendari, risultati e fantapunti.
+a leghe, squadre, rose, calciatori, competizioni, calendari, risultati, fantapunti e formazioni live.
 
 > [!WARNING]
 > Questa libreria non è affiliata a Fantacalcio né è approvata o supportata da Fantacalcio. Utilizza
@@ -11,9 +11,9 @@ a leghe, squadre, rose, calciatori, competizioni, calendari, risultati e fantapu
 > Consulta i [termini in vigore](https://www.fantacalcio.it/termini-e-condizioni/) della piattaforma
 > e ottieni le autorizzazioni appropriate per il tuo caso d'uso.
 
-Il client supporta intenzionalmente soltanto il login e un insieme ristretto di
-endpoint di lettura. Non espone operazioni remote per formazioni, mercato, calcolo, annullamento,
-gestione della lega o altre modifiche.
+Il client supporta intenzionalmente soltanto il login e un insieme ristretto di endpoint di lettura.
+Non espone modifiche remote per l'invio delle formazioni, il mercato, il calcolo, l'annullamento, la
+gestione della lega o altre operazioni.
 
 ## Requisiti
 
@@ -58,6 +58,36 @@ const roster = await league.getRosters();
 ruolo. `getPlayerCatalog()` restituisce il catalogo normalizzato dei calciatori della lega.
 `getRosters()` combina entrambe le letture e rifiuta calciatori mancanti, assegnazioni duplicate,
 ruoli non validi e totali per ruolo incoerenti.
+
+### Formazioni live
+
+Usa i campi identificativi di una partita del calendario per leggerne i parziali correnti delle
+squadre e i voti dei calciatori:
+
+```ts
+const fixture = fixtures.find((item) => !item.calculated) ?? fixtures.at(-1);
+if (!fixture) throw new Error('La competizione non contiene partite.');
+
+const live = await league.getLiveLineup({
+  competitionId: competition.id,
+  competitionMatchday: fixture.competitionMatchday,
+  serieAMatchday: fixture.serieAMatchday,
+  homeExternalTeamId: fixture.homeExternalTeamId,
+  awayExternalTeamId: fixture.awayExternalTeamId
+});
+
+console.log(live.home.partialFantasyPoints);
+console.log(live.home.starters[0]?.rawScore);
+```
+
+Ogni squadra contiene una stringa `partialFantasyPoints` con due decimali e gli array ordinati
+`starters` e `bench`. I campi `rawScore` e `adjustedScore` di un calciatore sono numeri quando il
+rispettivo valore è disponibile. I valori sentinella verificati che indicano l'assenza del voto
+vengono normalizzati in `null`, con `hasVote` impostato su `false` quando entrambi i voti non sono
+disponibili; `goals` contiene soltanto il contatore dei gol normali. I valori live sono provvisori e
+possono cambiare finché `calculated` non diventa `true`.
+Una formazione live è un'istantanea della partita, non l'inventario canonico della rosa; usa
+`getRosters()` per determinare l'appartenenza alla rosa.
 
 Se l'account appartiene a una sola lega, `account.league()` la seleziona automaticamente. Gli
 account associati a più leghe devono specificare l'ID della lega.
@@ -107,7 +137,9 @@ const fixtures = await league.getCalendar('99', { signal: controller.signal });
 ## Compatibilità
 
 Le modifiche ai contratti API vengono segnalate con errori quali `LOGIN_CONTRACT_CHANGED`,
-`DISCOVERY_CONTRACT_CHANGED`, `CALENDAR_CONTRACT_CHANGED` e `ROSTER_CONTRACT_CHANGED`.
+`DISCOVERY_CONTRACT_CHANGED`, `CALENDAR_CONTRACT_CHANGED`, `ROSTER_CONTRACT_CHANGED` e
+`LIVE_CONTRACT_CHANGED`. Una risposta valida che identifica una partita diversa produce
+`LIVE_RESPONSE_MISMATCH`.
 
 ## Sviluppo
 
@@ -123,10 +155,10 @@ I test utilizzano soltanto dati di esempio e non richiedono credenziali reali n�
 
 ### Smoke test manuale sull'API reale
 
-Lo smoke test facoltativo esegue l'autenticazione, individua i metadati della lega e legge le rose e
-il calendario di una competizione. Stampa soltanto i nomi descrittivi e gli ID di leghe o
-competizioni necessari per la selezione, insieme ai valori aggregati; non stampa mai credenziali,
-JWT o dati dei calciatori e non esegue operazioni di scrittura su Leghe FC.
+Lo smoke test facoltativo esegue l'autenticazione, individua i metadati della lega e legge le rose,
+il calendario di una competizione e una formazione live. Stampa soltanto i nomi descrittivi e gli ID
+di leghe o competizioni necessari per la selezione, insieme ai valori aggregati; non stampa mai
+credenziali, JWT, dati o voti dei calciatori e non esegue operazioni di scrittura su Leghe FC.
 
 ```bash
 cp .env.example .env.local

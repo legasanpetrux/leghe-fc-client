@@ -69,6 +69,35 @@ export type LegheFcFixture = {
 	payloadHash: string;
 };
 
+export type LegheFcLiveLineupRequest = {
+	competitionId: string;
+	competitionMatchday: number;
+	serieAMatchday: number;
+	homeExternalTeamId: string;
+	awayExternalTeamId: string;
+};
+
+export type LegheFcLivePlayer = {
+	externalPlayerId: string;
+	rawScore: number | null;
+	adjustedScore: number | null;
+	hasVote: boolean;
+	goals: number;
+};
+
+export type LegheFcLiveTeam = {
+	externalTeamId: string;
+	partialFantasyPoints: string;
+	starters: LegheFcLivePlayer[];
+	bench: LegheFcLivePlayer[];
+};
+
+export type LegheFcLiveLineup = LegheFcLiveLineupRequest & {
+	calculated: boolean;
+	home: LegheFcLiveTeam;
+	away: LegheFcLiveTeam;
+};
+
 export type LegheFcRequestOptions = {
 	signal?: AbortSignal;
 };

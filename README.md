@@ -3,7 +3,7 @@
 English | [Italiano](README.it.md)
 
 Unofficial, server-only TypeScript client for reading league, team, roster, player, competition,
-fixture, result, and fantasy-point data from Leghe FC.
+fixture, result, fantasy-point, and live-lineup data from Leghe FC.
 
 > [!WARNING]
 > This package is not affiliated with, endorsed by, or supported by Fantacalcio. It uses an
@@ -12,8 +12,8 @@ fixture, result, and fantasy-point data from Leghe FC.
 > appropriate to your use case.
 
 The client intentionally supports only the login request and a small allowlist of read endpoints.
-It does not expose lineup, market, calculation, cancellation, league-management, or other remote
-mutation operations.
+It does not expose remote mutations for lineup submission, the market, calculation, cancellation,
+league management, or anything else.
 
 ## Requirements
 
@@ -57,6 +57,34 @@ const roster = await league.getRosters();
 `getTeams()` returns normalized teams with player IDs, acquisition costs, and position totals.
 `getPlayerCatalog()` returns the normalized league player catalog. `getRosters()` joins both reads
 and rejects missing players, duplicate assignments, invalid roles, and inconsistent position totals.
+
+### Live lineups
+
+Use the identity fields from a calendar fixture to read its current team partials and player votes:
+
+```ts
+const fixture = fixtures.find((item) => !item.calculated) ?? fixtures.at(-1);
+if (!fixture) throw new Error('The competition has no fixtures.');
+
+const live = await league.getLiveLineup({
+  competitionId: competition.id,
+  competitionMatchday: fixture.competitionMatchday,
+  serieAMatchday: fixture.serieAMatchday,
+  homeExternalTeamId: fixture.homeExternalTeamId,
+  awayExternalTeamId: fixture.awayExternalTeamId
+});
+
+console.log(live.home.partialFantasyPoints);
+console.log(live.home.starters[0]?.rawScore);
+```
+
+Each team has a fixed two-decimal `partialFantasyPoints` string plus ordered `starters` and `bench`
+arrays. A player's `rawScore` and `adjustedScore` are numbers when each value is available. The
+verified no-vote sentinels are normalized to `null`, with `hasVote` set to `false` when neither score
+is available; `goals` contains only the normal-goal counter. Live values are provisional and can
+change until `calculated` is true.
+A live lineup is a match snapshot, not a canonical roster inventory; use `getRosters()` for
+membership.
 
 If the account belongs to exactly one league, `account.league()` selects it automatically.
 Accounts with multiple leagues must pass a league ID.
@@ -104,7 +132,9 @@ const fixtures = await league.getCalendar('99', { signal: controller.signal });
 ## Compatibility
 
 Contract changes are reported with errors such as `LOGIN_CONTRACT_CHANGED`,
-`DISCOVERY_CONTRACT_CHANGED`, `CALENDAR_CONTRACT_CHANGED`, and `ROSTER_CONTRACT_CHANGED`.
+`DISCOVERY_CONTRACT_CHANGED`, `CALENDAR_CONTRACT_CHANGED`, `ROSTER_CONTRACT_CHANGED`, and
+`LIVE_CONTRACT_CHANGED`. A valid response identifying a different fixture reports
+`LIVE_RESPONSE_MISMATCH`.
 
 ## Development
 
@@ -120,10 +150,10 @@ Tests use only synthetic payloads and do not require real credentials or network
 
 ### Manual live smoke test
 
-The opt-in smoke test authenticates, discovers league metadata, and reads rosters plus one
-competition calendar. It prints only league or competition display names and IDs needed for
-selection plus aggregate counts; it never prints credentials, JWTs, or player data and contains no
-remote mutation calls.
+The opt-in smoke test authenticates, discovers league metadata, and reads rosters, one competition
+calendar, and one live lineup. It prints only league or competition display names and IDs needed for
+selection plus aggregate counts; it never prints credentials, JWTs, player data, or scores and
+contains no remote mutation calls.
 
 ```bash
 cp .env.example .env.local

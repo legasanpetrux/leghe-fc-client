@@ -1,6 +1,6 @@
 {
   "name": "@legasanpetrux/leghe-fc-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Unofficial, read-only TypeScript client for Leghe FC league data.",
   "type": "module",
   "license": "MIT",
@@ -15,6 +15,7 @@
   },
   "keywords": [
     "fantasy-football",
+    "fantacalcio",
     "leghe-fc",
     "typescript",
     "api-client"
@@ -24,6 +25,7 @@
   },
   "files": [
     "dist",
+    "README.it.md",
     "README.md",
     "SECURITY.md"
   ],

@@ -21,7 +21,9 @@ async function main() {
 		...(appKey ? { appKey } : {})
 	});
 
-	console.log(`Authentication succeeded (${account.leagues.length} league${account.leagues.length === 1 ? '' : 's'}).`);
+	console.log(
+		`Authentication succeeded (${account.leagues.length} league${account.leagues.length === 1 ? '' : 's'}).`
+	);
 	const configuredLeagueId = optionalEnvironment('LEGHE_FC_LEAGUE_ID');
 	if (!configuredLeagueId && account.leagues.length > 1) {
 		console.table(account.leagues.map(({ id, name }) => ({ id, name })));
@@ -59,6 +61,35 @@ async function main() {
 	const calculated = fixtures.filter((fixture) => fixture.calculated).length;
 	console.log(
 		`Calendar succeeded for ${competition.name}: ${fixtures.length} fixtures (${calculated} calculated).`
+	);
+
+	const byMatchday = (left, right) =>
+		left.competitionMatchday - right.competitionMatchday ||
+		left.externalFixtureKey.localeCompare(right.externalFixtureKey);
+	const uncalculatedFixtures = fixtures.filter((fixture) => !fixture.calculated).sort(byMatchday);
+	const calculatedFixtures = fixtures.filter((fixture) => fixture.calculated).sort(byMatchday);
+	const fixture = uncalculatedFixtures[0] ?? calculatedFixtures.at(-1);
+	if (!fixture) {
+		throw new Error(
+			'The selected competition does not contain a fixture for the live lineup smoke test.'
+		);
+	}
+
+	const live = await league.getLiveLineup({
+		competitionId: competition.id,
+		competitionMatchday: fixture.competitionMatchday,
+		serieAMatchday: fixture.serieAMatchday,
+		homeExternalTeamId: fixture.homeExternalTeamId,
+		awayExternalTeamId: fixture.awayExternalTeamId
+	});
+	const players = [
+		...live.home.starters,
+		...live.home.bench,
+		...live.away.starters,
+		...live.away.bench
+	];
+	console.log(
+		`Live lineup succeeded: ${players.length} players (${players.filter((player) => player.hasVote).length} with a vote).`
 	);
 	console.log('Live smoke test passed.');
 }

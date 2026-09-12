@@ -30,11 +30,16 @@ const FIXED_GET_PATHS = new Set([
 	'/onboarding/v1/league/competitions',
 	'/onboarding/v1/league/update'
 ]);
+const TEAM_LINEUP_PATH = /^\/gaming\/v1\/teamLineup\/\d+\/\d+\/\d+\/\d+\/\d+$/;
 
 function isAllowedRequest(method: string, path: string): boolean {
 	if (method === 'POST') return path === '/onboarding/v1/login';
 	if (method !== 'GET') return false;
-	return FIXED_GET_PATHS.has(path) || /^\/onboarding\/v1\/league\/competition\/calendar\/\d+$/.test(path);
+	return (
+		FIXED_GET_PATHS.has(path) ||
+		/^\/onboarding\/v1\/league\/competition\/calendar\/\d+$/.test(path) ||
+		TEAM_LINEUP_PATH.test(path)
+	);
 }
 
 function retryDelay(attempt: number, retryAfter: string | null): number {
@@ -62,6 +67,7 @@ async function waitBeforeRetry(delayMs: number, signal?: AbortSignal): Promise<v
 async function readJson(response: Response, maxResponseBytes: number): Promise<unknown> {
 	const declaredLength = Number(response.headers.get('content-length'));
 	if (Number.isFinite(declaredLength) && declaredLength > maxResponseBytes) {
+		await response.body?.cancel();
 		throw new LegheFcError('RESPONSE_TOO_LARGE', 'The API response exceeded the configured size limit.', {
 			status: response.status
 		});
@@ -127,11 +133,20 @@ export class ReadOnlyTransport {
 
 	async request(
 		path: string,
-		init: { method: 'GET' | 'POST'; authorization?: string; body?: string; cachable?: boolean },
+		init: {
+			method: 'GET' | 'POST';
+			authorization?: string;
+			body?: string;
+			cachable?: boolean;
+			maxResponseBytes?: number;
+		},
 		signal?: AbortSignal
 	): Promise<unknown> {
 		if (!isAllowedRequest(init.method, path)) {
 			throw new LegheFcError('CLIENT_CONFIG_INVALID', 'The client attempted a request outside its read-only endpoint allowlist.');
+		}
+		if (init.maxResponseBytes !== undefined) {
+			validateTransportOptions({ maxResponseBytes: init.maxResponseBytes });
 		}
 
 		for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
@@ -170,7 +185,10 @@ export class ReadOnlyTransport {
 					});
 				}
 
-				return await readJson(response, this.#maxResponseBytes);
+				return await readJson(
+					response,
+					Math.min(this.#maxResponseBytes, init.maxResponseBytes ?? this.#maxResponseBytes)
+				);
 			} catch (error) {
 				if (error instanceof LegheFcError) throw error;
 				if (signal?.aborted) {

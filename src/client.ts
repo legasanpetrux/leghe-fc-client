@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { createPublicAppKeyProvider } from './app-key.js';
 import { LegheFcError } from './errors.js';
+import {
+	parseLegheFcLiveLineup,
+	validateLegheFcLiveLineupRequest
+} from './live.js';
 import { DEFAULT_TIMEOUT_MS, validateTransportOptions } from './options.js';
 import { parseLegheFcCalendar } from './parser.js';
 import {
@@ -23,6 +27,8 @@ import type {
 	LegheFcFixture,
 	LegheFcLeague,
 	LegheFcInvalidatableAppKeyProvider,
+	LegheFcLiveLineup,
+	LegheFcLiveLineupRequest,
 	LegheFcPlayer,
 	LegheFcRequestOptions,
 	LegheFcRosterPlayer,
@@ -31,6 +37,7 @@ import type {
 
 const APP_KEY_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 const ID_PATTERN = /^\d+$/;
+const MAX_LIVE_RESPONSE_BYTES = 256 * 1024;
 const sharedPublicAppKeyProviders = new WeakMap<
 	typeof globalThis.fetch,
 	Map<number, LegheFcInvalidatableAppKeyProvider>
@@ -104,7 +111,18 @@ export interface LegheFcLeagueClient {
 	getCalendar(competitionId: string, options?: LegheFcRequestOptions): Promise<LegheFcFixture[]>;
 }
 
-class AuthenticatedAccount implements LegheFcAccount {
+export interface LegheFcLiveLeagueClient extends LegheFcLeagueClient {
+	getLiveLineup(
+		request: LegheFcLiveLineupRequest,
+		options?: LegheFcRequestOptions
+	): Promise<LegheFcLiveLineup>;
+}
+
+export interface LegheFcLiveAccount extends LegheFcAccount {
+	league(leagueId?: string): LegheFcLiveLeagueClient;
+}
+
+class AuthenticatedAccount implements LegheFcLiveAccount {
 	readonly leagues: readonly LegheFcLeague[];
 	readonly #transport: ReadOnlyTransport;
 	readonly #remoteLeagues: ReadonlyMap<string, RemoteLeague>;
@@ -115,7 +133,7 @@ class AuthenticatedAccount implements LegheFcAccount {
 		this.leagues = Object.freeze(remoteLeagues.map((league) => Object.freeze(publicLeague(league))));
 	}
 
-	league(leagueId?: string): LegheFcLeagueClient {
+	league(leagueId?: string): LegheFcLiveLeagueClient {
 		const selectedId = leagueId ?? (this.leagues.length === 1 ? this.leagues[0]?.id : undefined);
 		if (!selectedId) {
 			throw new LegheFcError('LEAGUE_NOT_SELECTED', 'This account has multiple leagues; select one by ID.');
@@ -130,7 +148,7 @@ class AuthenticatedAccount implements LegheFcAccount {
 	}
 }
 
-class AuthenticatedLeagueClient implements LegheFcLeagueClient {
+class AuthenticatedLeagueClient implements LegheFcLiveLeagueClient {
 	readonly league: LegheFcLeague;
 	readonly #transport: ReadOnlyTransport;
 	readonly #jwt: string;
@@ -211,12 +229,30 @@ class AuthenticatedLeagueClient implements LegheFcLeagueClient {
 		);
 		return parseLegheFcCalendar(payload, competitionId);
 	}
+
+	async getLiveLineup(
+		request: LegheFcLiveLineupRequest,
+		{ signal }: LegheFcRequestOptions = {}
+	): Promise<LegheFcLiveLineup> {
+		validateLegheFcLiveLineupRequest(request);
+		const payload = await this.#transport.request(
+			`/gaming/v1/teamLineup/${request.competitionId}/${request.competitionMatchday}/${request.serieAMatchday}/${request.homeExternalTeamId}/${request.awayExternalTeamId}`,
+			{
+				method: 'GET',
+				authorization: this.#jwt,
+				cachable: false,
+				maxResponseBytes: MAX_LIVE_RESPONSE_BYTES
+			},
+			signal
+		);
+		return parseLegheFcLiveLineup(payload, request);
+	}
 }
 
 export async function authenticateLegheFc(
 	options: LegheFcClientOptions,
 	{ signal }: LegheFcRequestOptions = {}
-): Promise<LegheFcAccount> {
+): Promise<LegheFcLiveAccount> {
 	validateOptions(options);
 	const fetchImplementation = options.fetch ?? globalThis.fetch;
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;

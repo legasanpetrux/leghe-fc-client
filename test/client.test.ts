@@ -3,10 +3,81 @@ import { describe, it } from 'node:test';
 import {
 	authenticateLegheFc,
 	createPublicAppKeyProvider,
-	LegheFcError
+	LegheFcError,
+	type LegheFcLeagueClient,
+	type LegheFcLiveAccount,
+	type LegheFcLiveLeagueClient
 } from '../src/index.js';
+import { ReadOnlyTransport } from '../src/transport.js';
+
+type Assert<T extends true> = T;
+type LegacyLeagueClientRemainsCompatible = Assert<
+	'getLiveLineup' extends keyof LegheFcLeagueClient ? false : true
+>;
+type LiveLeagueClientExposesLineup = Assert<
+	'getLiveLineup' extends keyof LegheFcLiveLeagueClient ? true : false
+>;
+type AuthenticationReturnsLiveAccount = Assert<
+	Awaited<ReturnType<typeof authenticateLegheFc>> extends LegheFcLiveAccount ? true : false
+>;
 
 const APP_KEY = 'abcdefghijklmnop1234567890';
+const LIVE_REQUEST = {
+	competitionId: '99',
+	competitionMatchday: 2,
+	serieAMatchday: 5,
+	homeExternalTeamId: '10',
+	awayExternalTeamId: '20'
+} as const;
+
+function loginResponse(): Response {
+	return jsonResponse({
+		success: true,
+		data: {
+			utente: { id: 1 },
+			jwt: 'account-secret-jwt',
+			leghe: [
+				{
+					id: 7,
+					nome: 'Example League',
+					alias: 'example',
+					jwt: 'league-secret-jwt',
+					id_squadra: 10
+				}
+			]
+		}
+	});
+}
+
+function liveLineupPayload() {
+	return {
+		cal: false,
+		cmday: 5,
+		idcomp: 99,
+		mday: 2,
+		res: '0-0',
+		home: {
+			tid: 10,
+			tot: 7.5,
+			starts: [
+				{
+					b: '0;0;1;0;0;0;0;0;1;0;0;0;0;0;0;0',
+					cscr: 7.5,
+					pid: 501,
+					ptype: 'A',
+					scr: 6.5
+				}
+			],
+			bench: []
+		},
+		away: {
+			tid: 20,
+			tot: 0,
+			starts: [],
+			bench: []
+		}
+	};
+}
 
 function jsonResponse(value: unknown, status = 200): Response {
 	return new Response(JSON.stringify(value), {
@@ -97,6 +168,9 @@ describe('authenticateLegheFc', () => {
 					}
 				]);
 			}
+			if (url.endsWith('/gaming/v1/teamLineup/99/2/5/10/20')) {
+				return jsonResponse(liveLineupPayload());
+			}
 			throw new Error(`Unexpected URL: ${url}`);
 		};
 
@@ -159,13 +233,177 @@ describe('authenticateLegheFc', () => {
 		assert.equal(fixture?.homeScore, 2);
 		assert.equal(fixture?.homeFantasyPoints, '72.50');
 
+		const controller = new AbortController();
+		const liveLineup = await league.getLiveLineup(LIVE_REQUEST, {
+			signal: controller.signal
+		});
+		assert.deepEqual(liveLineup, {
+			...LIVE_REQUEST,
+			calculated: false,
+			home: {
+				externalTeamId: '10',
+				partialFantasyPoints: '7.50',
+				starters: [
+					{
+						externalPlayerId: '501',
+						rawScore: 6.5,
+						adjustedScore: 7.5,
+						hasVote: true,
+						goals: 1
+					}
+				],
+				bench: []
+			},
+			away: {
+				externalTeamId: '20',
+				partialFantasyPoints: '0.00',
+				starters: [],
+				bench: []
+			}
+		});
+
 		const loginCall = calls.find((call) => call.url.endsWith('/login'));
 		assert.equal(loginCall?.method, 'POST');
 		assert.equal(loginCall?.headers.get('app_key'), APP_KEY);
-		const authenticatedCalls = calls.filter((call) => call.url.includes('/league/'));
+		const authenticatedCalls = calls.filter((call) => !call.url.endsWith('/login'));
 		assert.ok(authenticatedCalls.every((call) => call.headers.get('authorization') === 'Bearer league-secret-jwt'));
+		const liveCall = calls.find((call) => call.url.includes('/gaming/v1/teamLineup/'));
+		assert.equal(liveCall?.url, 'https://apileague.fantacalcio.it/gaming/v1/teamLineup/99/2/5/10/20');
+		assert.equal(liveCall?.method, 'GET');
+		assert.equal(liveCall?.headers.get('cachable'), 'false');
+		assert.equal(liveCall?.headers.get('cache-control'), 'no-cache');
 		assert.ok(calls.every((call) => call.method === 'GET' || call.url.endsWith('/login')));
 		assert.ok(calls.every((call) => call.redirect === 'error'));
+	});
+
+	it('rejects invalid live-lineup requests before making an authenticated request', async () => {
+		let fetchCalls = 0;
+		const account = await authenticateLegheFc({
+			username: 'user',
+			password: 'password',
+			appKey: APP_KEY,
+			fetch: async () => {
+				fetchCalls += 1;
+				return loginResponse();
+			}
+		});
+		const league = account.league();
+		const invalidRequests: unknown[] = [
+			null,
+			{ ...LIVE_REQUEST, competitionId: '../login' },
+			{ ...LIVE_REQUEST, competitionId: 99 },
+			{ ...LIVE_REQUEST, homeExternalTeamId: '10/../20' },
+			{ ...LIVE_REQUEST, competitionMatchday: 0 },
+			{ ...LIVE_REQUEST, serieAMatchday: Number.MAX_SAFE_INTEGER + 1 },
+			{ ...LIVE_REQUEST, awayExternalTeamId: LIVE_REQUEST.homeExternalTeamId }
+		];
+		for (const invalidRequest of invalidRequests) {
+			await assert.rejects(
+				league.getLiveLineup(invalidRequest as typeof LIVE_REQUEST),
+				(error: unknown) => error instanceof LegheFcError && error.code === 'LIVE_REQUEST_INVALID'
+			);
+		}
+		assert.equal(fetchCalls, 1);
+	});
+
+	it('keeps the live-lineup transport allowlist exact and read-only', async () => {
+		let fetchCalls = 0;
+		const transport = new ReadOnlyTransport({
+			appKey: APP_KEY,
+			fetch: async () => {
+				fetchCalls += 1;
+				return jsonResponse({});
+			}
+		});
+		for (const [path, method] of [
+			['/gaming/v1/teamLineup/99/2/5/10', 'GET'],
+			['/gaming/v1/teamLineup/99/2/5/10/20/30', 'GET'],
+			['/gaming/v1/teamLineup/99/2/5/10/20?extra=1', 'GET'],
+			['/gaming/v1/teamLineup/99/2/5/10/20', 'POST']
+		] as const) {
+			await assert.rejects(
+				transport.request(path, { method }),
+				(error: unknown) =>
+					error instanceof LegheFcError && error.code === 'CLIENT_CONFIG_INVALID'
+			);
+		}
+		assert.equal(fetchCalls, 0);
+	});
+
+	it('enforces the live endpoint ceiling without weakening a smaller configured limit', async () => {
+		const endpointLimited = await authenticateLegheFc({
+			username: 'user',
+			password: 'password',
+			appKey: APP_KEY,
+			fetch: async (input) => {
+				if (String(input).endsWith('/login')) return loginResponse();
+				return new Response('{}', {
+					headers: { 'content-length': String(256 * 1024 + 1) }
+				});
+			}
+		});
+		await assert.rejects(
+			endpointLimited.league().getLiveLineup(LIVE_REQUEST),
+			(error: unknown) => error instanceof LegheFcError && error.code === 'RESPONSE_TOO_LARGE'
+		);
+
+		const configuredLimit = await authenticateLegheFc({
+			username: 'user',
+			password: 'password',
+			appKey: APP_KEY,
+			maxResponseBytes: 1_024,
+			fetch: async (input) => {
+				if (String(input).endsWith('/login')) return loginResponse();
+				return jsonResponse({ ...liveLineupPayload(), ignored: 'x'.repeat(2_000) });
+			}
+		});
+		await assert.rejects(
+			configuredLimit.league().getLiveLineup(LIVE_REQUEST),
+			(error: unknown) => error instanceof LegheFcError && error.code === 'RESPONSE_TOO_LARGE'
+		);
+	});
+
+	it('does not retry an expired live JWT or expose its response body', async () => {
+		let liveFetches = 0;
+		const account = await authenticateLegheFc({
+			username: 'user',
+			password: 'password',
+			appKey: APP_KEY,
+			maxAttempts: 3,
+			fetch: async (input) => {
+				if (String(input).endsWith('/login')) return loginResponse();
+				liveFetches += 1;
+				return jsonResponse({ token: 'must-not-leak', detail: 'expired JWT' }, 401);
+			}
+		});
+
+		await assert.rejects(
+			account.league().getLiveLineup(LIVE_REQUEST),
+			(error: unknown) =>
+				error instanceof LegheFcError &&
+				error.code === 'HTTP_ERROR' &&
+				error.status === 401 &&
+				!error.message.includes('must-not-leak')
+		);
+		assert.equal(liveFetches, 1);
+	});
+
+	it('propagates live response identity mismatches as a stable typed error', async () => {
+		const account = await authenticateLegheFc({
+			username: 'user',
+			password: 'password',
+			appKey: APP_KEY,
+			fetch: async (input) => {
+				if (String(input).endsWith('/login')) return loginResponse();
+				return jsonResponse({ ...liveLineupPayload(), idcomp: 100 });
+			}
+		});
+
+		await assert.rejects(
+			account.league().getLiveLineup(LIVE_REQUEST),
+			(error: unknown) =>
+				error instanceof LegheFcError && error.code === 'LIVE_RESPONSE_MISMATCH'
+		);
 	});
 
 	it('requires an explicit league selection for accounts with multiple leagues', async () => {
